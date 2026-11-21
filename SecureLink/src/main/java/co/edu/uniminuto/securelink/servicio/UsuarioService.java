@@ -1,76 +1,86 @@
 package co.edu.uniminuto.securelink.servicio;
 
-import co.edu.uniminuto.securelink.modelo.Usuario;
-import co.edu.uniminuto.securelink.modelo.UsuarioPanel;
-import co.edu.uniminuto.securelink.repositorio.UsuarioRepository;
+import co.edu.uniminuto.securelink.controlador.ErroresApi.Conflicto;
+import co.edu.uniminuto.securelink.controlador.ErroresApi.SolicitudInvalida;
+import co.edu.uniminuto.securelink.dominio.Usuario;
+import co.edu.uniminuto.securelink.repositorio.UsuarioRepositorio;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 
-/**
- * PROVISIONAL: sera reemplazado por el backend de A.
- *
- * <p>Centraliza el registro, la verificacion de contrasenas con bcrypt y la
- * consulta de usuarios para el panel de administracion.</p>
- */
 @Service
 public class UsuarioService {
 
-    /** El registro publico siempre crea usuarios con este rol. */
-    private static final String ROL_USUARIO = "usuario";
+    private static final Pattern NOMBRE = Pattern.compile("[A-Za-z0-9_.-]{3,50}");
 
-    private final UsuarioRepository usuarioRepository;
-    private final PasswordEncoder passwordEncoder;
-
-    public UsuarioService(UsuarioRepository usuarioRepository, PasswordEncoder passwordEncoder) {
-        this.usuarioRepository = usuarioRepository;
-        this.passwordEncoder = passwordEncoder;
+    /** Estructura de un hash bcrypt ($version$costo$sal+digest). */
+    public record EstructuraHash(String algoritmo, String version, Integer costo, String sal, String digest) {
     }
 
-    public boolean existe(String usuario) {
-        return usuarioRepository.existsByUsuario(usuario);
+    /** Vista de un usuario para el panel de administracion (el admin ve todo). */
+    public record UsuarioAdmin(long id, String usuario, String rol, boolean activo, String creadoEn,
+                               String hash, EstructuraHash estructura) {
     }
 
-    /**
-     * Registra un usuario nuevo. La contrasena se transforma con bcrypt antes
-     * de guardarla y el rol se fija en "usuario" desde el servidor.
-     */
-    public Usuario registrar(String usuario, String contrasena) {
-        String hash = passwordEncoder.encode(contrasena);
-        Usuario nuevo = new Usuario(usuario, hash, ROL_USUARIO);
-        return usuarioRepository.save(nuevo);
+    private final UsuarioRepositorio repo;
+    private final PasswordEncoder encoder;
+    private final String rolPorDefecto;
+
+    public UsuarioService(UsuarioRepositorio repo, PasswordEncoder encoder,
+                          @Value("${securelink.registro.rol-por-defecto:usuario}") String rolPorDefecto) {
+        this.repo = repo;
+        this.encoder = encoder;
+        this.rolPorDefecto = rolPorDefecto;
     }
 
-    /**
-     * Verifica usuario y contrasena. Usa matches(), que compara la contrasena
-     * ingresada con el hash almacenado; la contrasena original no se guarda.
-     */
-    public Optional<Usuario> autenticar(String usuario, String contrasena) {
-        if (usuario == null || contrasena == null) {
-            return Optional.empty();
+    /** Registro publico: el rol lo fija el servidor, nunca el formulario. */
+    public Usuario registrar(String usuario, String contrasena, String confirmar) {
+        String nombre = usuario == null ? "" : usuario.trim();
+        if (!NOMBRE.matcher(nombre).matches()) {
+            throw new SolicitudInvalida("El usuario debe tener entre 3 y 50 caracteres (letras, números, _ . -).");
         }
-        return usuarioRepository.findByUsuario(usuario)
-                .filter(encontrado -> passwordEncoder.matches(contrasena, encontrado.getHash()));
+        if (contrasena == null || contrasena.length() < 8) {
+            throw new SolicitudInvalida("La contraseña debe tener al menos 8 caracteres.");
+        }
+        if (contrasena.getBytes(StandardCharsets.UTF_8).length > 72) {
+            throw new SolicitudInvalida("La contraseña no puede superar 72 bytes (límite de bcrypt).");
+        }
+        if (!contrasena.equals(confirmar)) {
+            throw new SolicitudInvalida("Las contraseñas no coinciden.");
+        }
+        if (repo.existe(nombre)) {
+            throw new Conflicto("Ese nombre de usuario ya está registrado.");
+        }
+        try {
+            repo.crear(nombre, encoder.encode(contrasena), rolPorDefecto);
+        } catch (DataIntegrityViolationException e) {
+            throw new Conflicto("Ese nombre de usuario ya está registrado.");
+        }
+        return repo.buscarPorNombre(nombre).orElseThrow();
     }
 
-    public Optional<Usuario> buscar(String usuario) {
-        return usuarioRepository.findByUsuario(usuario);
+    public List<UsuarioAdmin> listarParaAdmin() {
+        return repo.listar().stream()
+                .map(u -> new UsuarioAdmin(u.id(), u.nombreUsuario(), u.rol(), u.activo(), u.creadoEn(),
+                        u.hash(), analizar(u.hash())))
+                .toList();
     }
 
-    /** Devuelve la lista que espera la plantilla admin, con el hash recortado. */
-    public List<UsuarioPanel> listarParaAdmin() {
-        return usuarioRepository.findAllByOrderByUsuarioAsc().stream()
-                .map(usuario -> new UsuarioPanel(
-                        usuario.getUsuario(),
-                        usuario.getRol(),
-                        acortarHash(usuario.getHash())))
-                .collect(Collectors.toList());
+    public Usuario porId(long id) {
+        return repo.buscarPorId(id).orElseThrow();
     }
 
-    private String acortarHash(String hash) {
-        return hash.substring(0, Math.min(20, hash.length()));
+    /** Descompone un hash bcrypt para mostrarlo de forma didactica. */
+    public static EstructuraHash analizar(String hash) {
+        String[] p = hash.split("\\$");
+        if (p.length == 4 && p[3].length() == 53) {
+            return new EstructuraHash("bcrypt", "$" + p[1], Integer.valueOf(p[2]), p[3].substring(0, 22), p[3].substring(22));
+        }
+        return new EstructuraHash("desconocido", null, null, null, hash);
     }
 }

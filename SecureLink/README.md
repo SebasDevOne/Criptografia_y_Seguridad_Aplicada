@@ -1,150 +1,112 @@
 # Parte III - Registro, autenticación y control de acceso por roles
 
-Trabajo del taller **Criptografía y Seguridad Aplicada** de UNIMINUTO, empresa
-ficticia **SECURELINK**. Esta carpeta contiene la interfaz, las pruebas y un
-backend provisional para ejecutar la aplicación en local.
+Taller **Criptografía y Seguridad Aplicada** (UNIMINUTO), empresa ficticia **SECURELINK**.
 
-> Los ejercicios de la Parte II (`rc4_demo.py`, `rc5_simulacion.py`) están fuera
-> de esta carpeta y no se modificaron.
+Estructura del repositorio:
+
+```
+Criptograf-a_y_Seguridad_Aplicada/
+├── SecureLink/   Backend: API REST con Spring Boot 4 + Spring Security + SQLite
+├── frontend/     Frontend: React (Vite) + React Router + Bootstrap
+└── Parte_II/     Simulación RC5 y demo RC4
+```
 
 ## Tecnologías
 
-- Java 17 como objetivo de compilación (probado con **JDK 25.0.2 Temurin**).
-- Spring Boot **4.1.2** (última versión estable al momento del trabajo).
-- Spring MVC + Thymeleaf + Bootstrap 5 por CDN.
-- Spring Data JPA + H2 en memoria.
-- `BCryptPasswordEncoder` de `spring-security-crypto` (sin Spring Security completo).
-- JUnit Jupiter + MockMvc (Spring Boot 4.1.2 administra JUnit 6; las
-  anotaciones usadas son las habituales `@Test` / `@SpringBootTest`).
-- Maven Wrapper (`mvnw` y `mvnw.cmd`); no hace falta instalar Maven.
+- **Backend:** Java 17 (probado con JDK 25), Spring Boot 4.1.2, `@RestController`, Spring Security (sesión + CSRF + roles),
+  JDBC (`JdbcClient`) sobre **SQLite**, bcrypt (login) y Argon2id/PBKDF2 (laboratorio, con BouncyCastle).
+- **Frontend:** React 19, React Router, Bootstrap 5. Vite reenvía `/api` al backend (mismo origen, así funcionan la cookie de sesión y el token CSRF).
 
-## Requisitos
+## Ejecutar
 
-- JDK 17 o superior. Recomendado: JDK 25.
-- Conexión a Internet la primera vez (Maven descarga dependencias y Bootstrap se
-  carga por CDN).
-- No hace falta instalar Maven ni una base de datos.
-
-## Comprobar el JDK (Windows PowerShell)
+Backend (terminal 1):
 
 ```powershell
-java -version
-java -version 2>&1 | Select-Object -First 1
-```
-
-Debe aparecer una versión 17 o superior. Para comprobar también el wrapper:
-
-```powershell
-cd C:\Users\user\Documents\Talller_Cripto\SecureLink
-.\mvnw.cmd -version
-```
-
-La primera ejecución descarga Maven 3.9.11 y las dependencias del proyecto.
-
-## Ejecutar la aplicación
-
-```powershell
-cd C:\Users\user\Documents\Talller_Cripto\SecureLink
+cd SecureLink
 .\mvnw.cmd spring-boot:run
 ```
 
-Abrir en el navegador:
-
-**http://localhost:8080/login**
-
-Para detener la aplicación: `Ctrl + C` en la terminal.
-
-La base H2 es en memoria: se crea al arrancar y se borra al detener. Las
-contraseñas de demostración se convierten a bcrypt al iniciar.
-
-## Usuarios de demostración
-
-| Usuario | Contraseña | Rol |
-|---|---|---|
-| `admin` | `Admin123*` | `admin` |
-| `usuario` | `Usuario123*` | `usuario` |
-| `invitado` | `Invitado123*` | `invitado` |
-
-Son contraseñas ficticias, solo para el taller. El panel `/admin` muestra los
-primeros 20 caracteres del hash bcrypt de cada usuario.
-
-## Ejecutar las pruebas
+Frontend (terminal 2):
 
 ```powershell
-cd C:\Users\user\Documents\Talller_Cripto\SecureLink
-.\mvnw.cmd test
+cd frontend
+npm install
+npm run dev
 ```
 
-Resultado esperado:
+Abrir **http://localhost:5173**. Pruebas del backend: `.\mvnw.cmd test`.
 
-```text
-Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
-BUILD SUCCESS
-```
+La base se crea sola en `SecureLink/securelink.db` (archivo SQLite, ignorado por git). Para empezar de cero, borra el archivo.
 
-Las pruebas están en
-`src/test/java/co/edu/uniminuto/securelink/FlujoAutenticacionTest.java` y cubren:
+## Usuarios iniciales
 
-1. login correcto y redirección por rol;
-2. login fallido con mensaje genérico;
-3. ruta protegida sin sesión;
-4. usuario sin rol admin recibe 403;
-5. reautenticación después del logout;
-6. hash bcrypt en el panel admin, sin contraseña en texto plano.
+Se leen de `application.properties` (no están en el código) y en la base solo queda el hash bcrypt. Se pueden cambiar con las variables
+`SECURELINK_ADMIN_PASS`, `SECURELINK_USUARIO_PASS`, `SECURELINK_INVITADO_PASS`.
 
-## Estructura del proyecto
+| Usuario | Contraseña | Rol | Ruta |
+|---|---|---|---|
+| `admin` | `Admin123*` | admin (nivel 3) | `/admin` |
+| `usuario` | `Usuario123*` | usuario (nivel 2) | `/usuario` |
+| `invitado` | `Invitado123*` | invitado (nivel 1) | `/invitado` |
 
-```text
-SecureLink/
-  src/main/resources/templates/     <- INTERFAZ (se conserva al integrar)
-  src/test/java/...                 <- PRUEBAS (se conservan al integrar)
-  src/main/java/...                 <- BACKEND PROVISIONAL (lo reemplaza A)
-  CONTRATO.md                       <- acuerdo backend <-> plantillas
-  pruebas_manuales.md               <- pasos para las capturas
-  explicacion_tecnica.md            <- borrador para el informe
-  README.md
-  pom.xml
-  mvnw, mvnw.cmd, .mvn/
-  .gitignore
-```
+## API REST
 
-El backend Java incluido está marcado como **PROVISIONAL** en el comentario de
-cada clase. Sirve para probar la interfaz y las pruebas, y será reemplazado por
-el backend de A.
+| Método y ruta | Acceso | Descripción |
+|---|---|---|
+| `POST /api/auth/login` | público | Valida con bcrypt, crea sesión y devuelve `redirigirA` según el rol |
+| `POST /api/auth/registro` | público | Crea usuario; el rol siempre es `usuario` (lo fija el servidor) |
+| `POST /api/auth/logout` | cualquiera | Destruye la sesión |
+| `GET /api/auth/me` | sesión | Usuario actual (401 sin sesión) |
+| `GET /api/admin/panel` | admin | Usuarios con hash descompuesto + auditoría |
+| `GET /api/usuario/panel` | usuario | Su hash con sal y digest parciales + su historial |
+| `GET /api/invitado/panel` | invitado | Lo básico y lo que tiene bloqueado |
+| `GET /api/didactica/algoritmos[/{codigo}]` | cualquier rol | Catálogo y explicación (secciones por nivel) |
+| `POST /api/didactica/operar` | cualquier rol* | Cifrar, descifrar, hash, verificar, codificar |
+| `GET /api/didactica/historial` | cualquier rol | Operaciones (las propias; el admin ve todas) |
 
-## Cómo integrar con el backend de A
+\* Cada algoritmo tiene un nivel mínimo de ejecución guardado en la base.
 
-1. **Copiar solo la interfaz:** pasar
-   `src/main/resources/templates/` al proyecto de A. No hace falta copiar el
-   paquete `co.edu.uniminuto.securelink` completo.
-2. **Alinear el backend con `CONTRATO.md`:** rutas, métodos, campos de
-   formulario, atributos de sesión, atributos de modelo y nombres de vista.
-   Las plantillas usan `@{...}` y no tienen rutas ni clases Java escritas a mano.
-3. **Dependencias del proyecto de A:** debe tener Thymeleaf y
-   `spring-security-crypto` para bcrypt. No se necesita Spring Security completo.
-4. **Copiar las pruebas:** llevar
-   `FlujoAutenticacionTest.java` al proyecto de A y agregar la dependencia de
-   pruebas MVC. Con Spring Boot 4.1.x es
-   `spring-boot-starter-webmvc-test` y el import de `@AutoConfigureMockMvc` es
-   `org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc`.
-   Si A usa Spring Boot 3.x, el import cambia a
-   `org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc`
-   y la dependencia de pruebas es `spring-boot-starter-test`; **[AJUSTAR]** en
-   ese caso.
-5. **Cuentas de demostración:** conservar `admin`, `usuario` e `invitado` con
-   las contraseñas de la tabla anterior, o actualizar las credenciales de las
-   pruebas y de `CONTRATO.md`.
-6. **Verificar:** ejecutar `.\mvnw.cmd test` en el proyecto integrado y repetir
-   las pruebas manuales de `pruebas_manuales.md`. Las capturas **finales** del
-   informe se toman con el backend real de A.
+## Base de datos (3FN)
 
-## Notas de seguridad del backend provisional
+`src/main/resources/db/schema.sql` y `data.sql`. Tablas: `roles`, `usuarios`, `categorias_algoritmo`, `algoritmos`, `operaciones`,
+`algoritmo_operaciones` (N:M), `tipos_seccion`, `secciones_algoritmo`, `tipos_evento`, `auditoria`, `claves_demo`.
 
-- Las contraseñas se guardan con `BCryptPasswordEncoder` (costo 10).
-- El login usa un mensaje genérico para no revelar si el usuario existe.
-- El registro público fija el rol `usuario` en el servidor.
-- El interceptor vuelve a leer el rol desde la base de datos en cada petición
-  protegida.
-- El logout ejecuta `session.invalidate()`.
-- La sesión viaja solo en la cookie (`tracking-modes=cookie`), no en la URL.
-- La vista admin solo muestra un fragmento del hash, nunca la contraseña.
+- **1FN:** valores atómicos, una fila por hecho.
+- **2FN:** la única tabla de clave compuesta (`algoritmo_operaciones`) no tiene más columnas.
+- **3FN:** los datos que dependían de otro atributo no clave están en su catálogo (rol → nivel y ruta; algoritmo → categoría; evento → descripción).
+- Llaves foráneas activas (`foreign_keys=on`). Los textos didácticos, roles, algoritmos y niveles viven en la base, no en el código.
+
+## Laboratorio didáctico: más información según el perfil
+
+| Nivel | Rol | Qué ve |
+|---|---|---|
+| 1 | invitado | Resultado final y resumen. Solo Base64, SHA-256 y MD5. Pasos internos ocultos. |
+| 2 | usuario | Parámetros y pasos; sal, IV y claves aparecen **parciales**. Explicación de "cómo funciona". Tiempo de ejecución. |
+| 3 | admin | Todo: sal, IV, clave derivada, texto cifrado en hex, claves RSA, análisis de seguridad e implementación, auditoría. |
+
+Algoritmos: Base64, SHA-256, MD5, HMAC-SHA256, bcrypt, Argon2id, PBKDF2, RC4, AES-CBC, AES-GCM, ChaCha20-Poly1305, RSA-2048 OAEP.
+Los cifradores simétricos derivan la clave de una frase con PBKDF2 y devuelven `Base64(sal ‖ IV ‖ cifrado)`, así que se pueden descifrar con la misma frase.
+La clave privada RSA de demostración se guarda en `claves_demo` en texto plano: es solo didáctica, nunca hacerlo en producción.
+
+## Análisis frente a los criterios de la profesora
+
+| Criterio | Estado | Dónde |
+|---|---|---|
+| bcrypt o Argon2id, no SHA-256/512 solos | Cumple (bcrypt) | `SeguridadConfig.passwordEncoder` |
+| Registro con usuario y contraseña, hash en BD, sin texto plano | Cumple | `UsuarioService.registrar`; prueba `laBaseGuardaSoloHashBcrypt` |
+| Mínimo 3 usuarios con rol (admin, usuario, invitado) | Cumple | `application.properties` + `SemillaService` |
+| Login comparando con el hash, sin descifrar | Cumple | `DaoAuthenticationProvider` → `matches()` |
+| Impedir acceso con credenciales malas | Cumple (401, mensaje genérico) | `AuthController.login`; `loginFallidoDevuelve401...` |
+| Redirección según rol y permisos validados en el servidor en cada petición | Cumple | `redirigirA` + `SeguridadConfig` + `RevalidarUsuarioFilter` |
+| Protección de rutas / sin sesión redirige al login | Cumple (API 401, React redirige a `/login`) | `RutaProtegida.jsx`; `rutaProtegidaSinSesionDevuelve401` |
+| Cerrar sesión (botón) y volver al login | Cumple | `Layout.jsx`; `trasCerrarSesion...` |
+| Pruebas: login ok/fallido, sin sesión, no-admin denegado, tras logout | Cumple (12 pruebas) | `FlujoAutenticacionTest` |
+| Interfaz con Bootstrap | Cumple | React + Bootstrap |
+| Entrega ZIP con proyecto | Pendiente de ti | Comprimir `SecureLink/` y `frontend/` (sin `node_modules`, `target`, `dist`) |
+| Informe PDF con investigación, capturas y pruebas | **Pendiente de ti** | Falta redactarlo y tomar capturas |
+
+**Observaciones honestas:**
+
+- El criterio dice "redirigir al login" sin sesión. En una API REST el servidor responde 401 y es el frontend quien redirige; el comportamiento visible es el mismo.
+- El informe en PDF y las capturas de pantalla no se pueden generar desde el código: faltan por hacer.
+- La sesión es de memoria del servidor (se pierde al reiniciar). Para producción convendría HTTPS, `cookie.secure=true` y límite de intentos de login (hoy solo se audita cada intento fallido).

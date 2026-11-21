@@ -4,190 +4,223 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.model;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.view;
 
 /**
- * Pruebas de integracion del flujo de autenticacion.
- *
- * <p>Dependen solo de las rutas, campos de formulario y atributos definidos en
- * CONTRATO.md. Por eso deben seguir sirviendo cuando se reemplace el backend
- * provisional por el backend real del companero.</p>
+ * Pruebas de integracion de la API REST: login, rutas protegidas, roles, logout, SQLite y
+ * visibilidad didactica por rol. Cada ejecucion usa su propia base SQLite temporal.
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:sqlite:target/test-${random.uuid}.db?foreign_keys=on",
+        "securelink.seguridad.bcrypt-costo=4"
+})
 @AutoConfigureMockMvc
 class FlujoAutenticacionTest {
 
     @Autowired
-    private MockMvc mockMvc;
+    private MockMvc mvc;
+    @Autowired
+    private JdbcClient jdbc;
+
+    private MockHttpSession login(String usuario, String clave) throws Exception {
+        MvcResult r = mvc.perform(post("/api/auth/login").with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"" + usuario + "\",\"contrasena\":\"" + clave + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        return (MockHttpSession) r.getRequest().getSession(false);
+    }
+
+    private String operar(MockHttpSession s, String body) throws Exception {
+        return mvc.perform(post("/api/didactica/operar").with(csrf()).session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andReturn().getResponse().getContentAsString();
+    }
 
     // (a) Inicio de sesion correcto y redireccion segun el rol.
     @Test
-    void inicioDeSesionCorrectoRedirigeSegunElRol() throws Exception {
-        MockHttpSession sesionAdmin = iniciarSesion("admin", "Admin123*", "/admin");
-        assertThat(sesionAdmin.getAttribute("usuario")).isEqualTo("admin");
-        assertThat(sesionAdmin.getAttribute("rol")).isEqualTo("admin");
-        mockMvc.perform(get("/admin").session(sesionAdmin))
+    void loginCorrectoIndicaLaRutaSegunElRol() throws Exception {
+        mvc.perform(post("/api/auth/login").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"admin\",\"contrasena\":\"Admin123*\"}"))
                 .andExpect(status().isOk())
-                .andExpect(view().name("admin"));
-
-        MockHttpSession sesionUsuario = iniciarSesion("usuario", "Usuario123*", "/usuario");
-        assertThat(sesionUsuario.getAttribute("rol")).isEqualTo("usuario");
-        mockMvc.perform(get("/usuario").session(sesionUsuario))
-                .andExpect(status().isOk())
-                .andExpect(view().name("usuario"));
-
-        MockHttpSession sesionInvitado = iniciarSesion("invitado", "Invitado123*", "/invitado");
-        assertThat(sesionInvitado.getAttribute("rol")).isEqualTo("invitado");
-        mockMvc.perform(get("/invitado").session(sesionInvitado))
-                .andExpect(status().isOk())
-                .andExpect(view().name("invitado"));
+                .andExpect(jsonPath("$.rol").value("admin"))
+                .andExpect(jsonPath("$.redirigirA").value("/admin"));
+        mvc.perform(post("/api/auth/login").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"usuario\",\"contrasena\":\"Usuario123*\"}"))
+                .andExpect(jsonPath("$.redirigirA").value("/usuario"));
+        mvc.perform(post("/api/auth/login").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"invitado\",\"contrasena\":\"Invitado123*\"}"))
+                .andExpect(jsonPath("$.redirigirA").value("/invitado"));
     }
 
-    // (b) Inicio de sesion fallido: mismo mensaje generico, sin iniciar sesion.
+    // (b) Inicio de sesion fallido: mismo mensaje para usuario inexistente y clave incorrecta.
     @Test
-    void inicioDeSesionFallidoMuestraMensajeGenerico() throws Exception {
-        MvcResult resultado = mockMvc.perform(post("/login")
-                        .param("usuario", "admin")
-                        .param("contrasena", "contrasena-incorrecta"))
-                .andExpect(status().isOk())
-                .andExpect(view().name("login"))
-                .andExpect(model().attribute("error", "Usuario o contraseña incorrectos"))
-                .andReturn();
-
-        Object usuarioEnSesion = resultado.getRequest().getSession(false) == null
-                ? null
-                : resultado.getRequest().getSession(false).getAttribute("usuario");
-        assertThat(usuarioEnSesion).isNull();
-    }
-
-    // (c) Ruta protegida sin sesion: redirige a /login.
-    @Test
-    void rutaProtegidaSinSesionRedirigeAlLogin() throws Exception {
-        List<String> rutasProtegidas = List.of("/admin", "/usuario", "/invitado");
-        for (String ruta : rutasProtegidas) {
-            mockMvc.perform(get(ruta))
-                    .andExpect(status().is3xxRedirection())
-                    .andExpect(redirectedUrl("/login"));
+    void loginFallidoDevuelve401ConMensajeGenerico() throws Exception {
+        for (String cuerpo : new String[]{
+                "{\"usuario\":\"admin\",\"contrasena\":\"mala\"}",
+                "{\"usuario\":\"noexiste\",\"contrasena\":\"Admin123*\"}"}) {
+            mvc.perform(post("/api/auth/login").with(csrf()).contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.error").value("Usuario o contraseña incorrectos"));
         }
     }
 
-    // (d) Usuario autenticado con rol "usuario" no puede entrar a /admin: 403.
+    // (c) Sin sesion no se entra a rutas protegidas.
     @Test
-    void usuarioSinRolAdminRecibe403EnAdmin() throws Exception {
-        MockHttpSession sesion = iniciarSesion("usuario", "Usuario123*", "/usuario");
-
-        mockMvc.perform(get("/admin").session(sesion))
-                .andExpect(status().isForbidden())
-                .andExpect(view().name("acceso-denegado"))
-                .andExpect(content().string(containsString("Acceso denegado")));
+    void rutaProtegidaSinSesionDevuelve401() throws Exception {
+        mvc.perform(get("/api/admin/panel")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/usuario/panel")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/didactica/algoritmos")).andExpect(status().isUnauthorized());
     }
 
-    // (e) Tras cerrar sesion se invalida la sesion y se vuelve a pedir autenticacion.
+    // (d) Un usuario sin rol admin recibe acceso denegado en la ruta de administracion.
+    @Test
+    void usuarioSinRolAdminRecibe403() throws Exception {
+        MockHttpSession usuario = login("usuario", "Usuario123*");
+        mvc.perform(get("/api/admin/panel").session(usuario)).andExpect(status().isForbidden());
+        MockHttpSession invitado = login("invitado", "Invitado123*");
+        mvc.perform(get("/api/admin/panel").session(invitado)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/usuario/panel").session(invitado)).andExpect(status().isForbidden());
+        MockHttpSession admin = login("admin", "Admin123*");
+        mvc.perform(get("/api/admin/panel").session(admin)).andExpect(status().isOk());
+    }
+
+    // (e) Tras cerrar sesion hay que autenticarse otra vez.
     @Test
     void trasCerrarSesionSeVuelveAPedirAutenticacion() throws Exception {
-        MockHttpSession sesion = iniciarSesion("admin", "Admin123*", "/admin");
-
-        mockMvc.perform(post("/logout").session(sesion))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login"));
-
-        assertThat(sesion.isInvalid()).isTrue();
-
-        mockMvc.perform(get("/admin"))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login"));
+        MockHttpSession sesion = login("usuario", "Usuario123*");
+        mvc.perform(get("/api/usuario/panel").session(sesion)).andExpect(status().isOk());
+        mvc.perform(post("/api/auth/logout").with(csrf()).session(sesion)).andExpect(status().isOk());
+        mvc.perform(get("/api/usuario/panel").session(sesion)).andExpect(status().isUnauthorized());
     }
 
-    // (f) El panel admin muestra un hash bcrypt (empieza por "$2") y nunca la contrasena.
-    // Se comprueba a traves del contrato (vista admin) para no depender del repository de A.
     @Test
-    void elHashGuardadoEmpiezaPorDosYNoEsLaContrasena() throws Exception {
-        String usuario = "usuario_prueba_hash";
-        String contrasena = "ClaveDePrueba123*";
-
-        mockMvc.perform(post("/registro")
-                        .param("usuario", usuario)
-                        .param("contrasena", contrasena)
-                        .param("confirmarContrasena", contrasena))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl("/login"));
-
-        MockHttpSession sesionAdmin = iniciarSesion("admin", "Admin123*", "/admin");
-        String htmlAdmin = mockMvc.perform(get("/admin").session(sesionAdmin))
-                .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        String filaUsuario = Arrays.stream(htmlAdmin.split("<tr>"))
-                .filter(fragmento -> fragmento.contains(">" + usuario + "<"))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError(
-                        "No se encontro el usuario registrado en el panel de administracion"));
-
-        Matcher matcher = Pattern.compile("<code>(\\$2[^<]+)</code>").matcher(filaUsuario);
-        assertThat(matcher.find())
-                .as("La vista admin debe mostrar un hash que empiece por $2")
-                .isTrue();
-
-        String vistaPreviaHash = matcher.group(1);
-        assertThat(vistaPreviaHash)
-                .as("Se muestran los primeros 20 caracteres del hash")
-                .startsWith("$2")
-                .hasSize(20);
-        assertThat(htmlAdmin)
-                .as("La contrasena nunca debe aparecer en la pagina")
-                .doesNotContain(contrasena);
+    void sinTokenCsrfElLoginSeRechaza() throws Exception {
+        mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"admin\",\"contrasena\":\"Admin123*\"}"))
+                .andExpect(status().isForbidden());
     }
 
-    // (g) Las rutas protegidas no deben quedar en la cache del navegador.
+    // SQLite: solo hay hashes bcrypt, nunca la contrasena.
     @Test
-    void panelAdminEnviaCabecerasParaNoUsarCache() throws Exception {
-        MockHttpSession sesion = iniciarSesion("admin", "Admin123*", "/admin");
-
-        mockMvc.perform(get("/admin").session(sesion))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Cache-Control", containsString("no-store")))
-                .andExpect(header().string("Pragma", "no-cache"))
-                .andExpect(header().string("Expires", "0"));
+    void laBaseGuardaSoloHashBcrypt() {
+        var hashes = jdbc.sql("SELECT hash_contrasena FROM usuarios").query(String.class).list();
+        assertThat(hashes).hasSizeGreaterThanOrEqualTo(3);
+        assertThat(hashes).allMatch(h -> h.startsWith("$2") && h.length() == 60);
+        assertThat(hashes).noneMatch(h -> h.contains("Admin123") || h.contains("Usuario123"));
     }
 
-    /**
-     * Inicia sesion con una peticion POST /login y devuelve la sesion creada.
-     * Solo usa los campos y rutas del contrato.
-     */
-    private MockHttpSession iniciarSesion(String usuario, String contrasena, String redireccionEsperada)
-            throws Exception {
+    @Test
+    void registroCreaUsuarioConRolUsuarioYRechazaDuplicados() throws Exception {
+        String cuerpo = "{\"usuario\":\"nuevo_test\",\"contrasena\":\"Clave1234*\",\"confirmarContrasena\":\"Clave1234*\","
+                + "\"rol\":\"admin\"}";
+        mvc.perform(post("/api/auth/registro").with(csrf()).contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/auth/login").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"nuevo_test\",\"contrasena\":\"Clave1234*\"}"))
+                .andExpect(jsonPath("$.rol").value("usuario"));
+        mvc.perform(post("/api/auth/registro").with(csrf()).contentType(MediaType.APPLICATION_JSON).content(cuerpo))
+                .andExpect(status().isConflict());
+        mvc.perform(post("/api/auth/registro").with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"usuario\":\"otro_test\",\"contrasena\":\"corta\",\"confirmarContrasena\":\"corta\"}"))
+                .andExpect(status().isBadRequest());
+    }
 
-        MvcResult resultado = mockMvc.perform(post("/login")
-                        .param("usuario", usuario)
-                        .param("contrasena", contrasena))
-                .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrl(redireccionEsperada))
-                .andReturn();
+    // Parte didactica: el detalle depende del rol.
+    @Test
+    void elDetalleDelLaboratorioDependeDelRol() throws Exception {
+        String texto = "\"algoritmo\":\"AES_GCM\",\"operacion\":\"CIFRAR\",\"texto\":\"hola\",\"clave\":\"secreto\"";
+        // El invitado no puede ejecutar AES-GCM (nivel 2).
+        MockHttpSession invitado = login("invitado", "Invitado123*");
+        mvc.perform(post("/api/didactica/operar").with(csrf()).session(invitado)
+                        .contentType(MediaType.APPLICATION_JSON).content("{" + texto + "}"))
+                .andExpect(status().isForbidden());
+        // Con SHA-256 si, pero con los pasos internos ocultos.
+        mvc.perform(post("/api/didactica/operar").with(csrf()).session(invitado)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"algoritmo\":\"SHA256\",\"operacion\":\"HASH\",\"texto\":\"hola\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultado").value(
+                        "b221d9dbb083a7f33428d7c2a3c3198ae925614d70210e28716ccaa7cd4ddb79"))
+                .andExpect(jsonPath("$.pasosOcultos").value(1))
+                .andExpect(jsonPath("$.tiempoMicros").doesNotExist());
 
-        MockHttpSession sesion = (MockHttpSession) resultado.getRequest().getSession(false);
-        assertThat(sesion)
-                .as("El login correcto debe crear una sesion")
-                .isNotNull();
-        return sesion;
+        // Usuario: ve parametros, valores secretos parciales.
+        MockHttpSession usuario = login("usuario", "Usuario123*");
+        String cifrado = mvc.perform(post("/api/didactica/operar").with(csrf()).session(usuario)
+                        .contentType(MediaType.APPLICATION_JSON).content("{" + texto + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pasos[?(@.visibilidad=='PARCIAL')]").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(cifrado).contains("\"pasosOcultos\":0");
+
+        // Admin: todo completo, incluida la clave derivada.
+        MockHttpSession admin = login("admin", "Admin123*");
+        mvc.perform(post("/api/didactica/operar").with(csrf()).session(admin)
+                        .contentType(MediaType.APPLICATION_JSON).content("{" + texto + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pasos[?(@.visibilidad!='COMPLETO')]").isEmpty());
+    }
+
+    @Test
+    void cifrarYDescifrarFuncionanConTodosLosCifradores() throws Exception {
+        MockHttpSession admin = login("admin", "Admin123*");
+        for (String alg : new String[]{"AES_GCM", "AES_CBC", "CHACHA20", "RC4", "RSA_OAEP"}) {
+            String r = operar(admin, "{\"algoritmo\":\"" + alg + "\",\"operacion\":\"CIFRAR\",\"texto\":\"Hola SecureLink\",\"clave\":\"frase\"}");
+            String cifrado = r.replaceAll(".*\"resultado\":\"([^\"]+)\".*", "$1");
+            mvc.perform(post("/api/didactica/operar").with(csrf()).session(admin)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"algoritmo\":\"" + alg + "\",\"operacion\":\"DESCIFRAR\",\"texto\":\"" + cifrado + "\",\"clave\":\"frase\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.resultado").value("Hola SecureLink"));
+        }
+        // Clave incorrecta en AES-GCM: error controlado, no 500.
+        String r = operar(admin, "{\"algoritmo\":\"AES_GCM\",\"operacion\":\"CIFRAR\",\"texto\":\"x\",\"clave\":\"a\"}");
+        String cifrado = r.replaceAll(".*\"resultado\":\"([^\"]+)\".*", "$1");
+        mvc.perform(post("/api/didactica/operar").with(csrf()).session(admin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"algoritmo\":\"AES_GCM\",\"operacion\":\"DESCIFRAR\",\"texto\":\"" + cifrado + "\",\"clave\":\"b\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void hashesDeContrasenasSeVerifican() throws Exception {
+        MockHttpSession admin = login("admin", "Admin123*");
+        for (String alg : new String[]{"BCRYPT", "ARGON2ID", "PBKDF2"}) {
+            String r = operar(admin, "{\"algoritmo\":\"" + alg + "\",\"operacion\":\"HASH\",\"texto\":\"MiClave1\"}");
+            String hash = r.replaceAll(".*\"resultado\":\"([^\"]+)\".*", "$1").replace("\\u0024", "$");
+            String v = "{\"algoritmo\":\"" + alg + "\",\"operacion\":\"VERIFICAR\",\"texto\":\"%s\",\"referencia\":\"" + hash + "\"}";
+            mvc.perform(post("/api/didactica/operar").with(csrf()).session(admin).contentType(MediaType.APPLICATION_JSON)
+                            .content(v.formatted("MiClave1")))
+                    .andExpect(jsonPath("$.resultado").value("COINCIDE"));
+            mvc.perform(post("/api/didactica/operar").with(csrf()).session(admin).contentType(MediaType.APPLICATION_JSON)
+                            .content(v.formatted("otra")))
+                    .andExpect(jsonPath("$.resultado").value("NO COINCIDE"));
+        }
+    }
+
+    @Test
+    void elAdminVeElHashCompletoYElUsuarioSoloParcial() throws Exception {
+        MockHttpSession admin = login("admin", "Admin123*");
+        mvc.perform(get("/api/admin/panel").session(admin))
+                .andExpect(jsonPath("$.usuarios", hasSize(org.hamcrest.Matchers.greaterThanOrEqualTo(3))))
+                .andExpect(jsonPath("$.usuarios[0].hash").exists())
+                .andExpect(jsonPath("$.usuarios[0].estructura.sal").exists());
+        MockHttpSession usuario = login("usuario", "Usuario123*");
+        mvc.perform(get("/api/usuario/panel").session(usuario))
+                .andExpect(jsonPath("$.miHash.sal", containsString("ocultos")))
+                .andExpect(jsonPath("$.miHash.costo").value(4));
     }
 }
