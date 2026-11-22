@@ -17,6 +17,8 @@ Uso:
   python rc4_demo.py
 """
 
+import sys
+
 
 def ksa(clave: bytes):
     """Key Scheduling Algorithm: inicializa y permuta el arreglo S."""
@@ -47,6 +49,8 @@ def rc4(clave: bytes, datos: bytes) -> bytes:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     # Mensaje ficticio de prueba (no es una credencial ni un token real)
     mensaje = "Mensaje ficticio de prueba: reunion de SECURELINK a las 10:00."
     clave = b"ClaveDidactica2026"          # clave definida para la demostración

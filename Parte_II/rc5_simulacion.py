@@ -163,6 +163,8 @@ TEXTO_EJEMPLO = (
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description="Simulación didáctica de cifrado de bloque estilo RC5.")
     ap.add_argument("archivo", nargs="?", default="mensaje.txt", help="archivo de entrada")
     ap.add_argument("--clave", default="clave-didactica-2026", help="clave (texto)")

@@ -1,29 +1,32 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { LuEye, LuLock, LuArrowRight, LuLoaderCircle, LuCpu, LuBookOpen } from 'react-icons/lu'
 import { api } from '../api.js'
+import { Escalonado, Tarjeta, Encabezado } from '../components/Piezas.jsx'
 
 export default function Invitado() {
   const [panel, setPanel] = useState(null)
   const [error, setError] = useState(null)
   useEffect(() => { api('/invitado/panel').then(setPanel).catch((e) => setError(e.message)) }, [])
 
-  if (error) return <div className="alert alert-danger">{error}</div>
-  if (!panel) return <p>Cargando…</p>
+  if (error) return <div className="alerta error">{error}</div>
+  if (!panel) return <div className="vacio"><LuLoaderCircle className="girar" /></div>
   return (
-    <>
-      <h1 className="h3">{panel.mensaje}</h1>
-      <p className="text-muted">Nivel 1: solo ves resultados finales y resúmenes.</p>
-      <Link className="btn btn-primary mb-4" to="/laboratorio">Probar el laboratorio</Link>
-      <div className="row">
-        <div className="col-md-6">
-          <h2 className="h6">🔒 Algoritmos que no puedes ejecutar</h2>
-          <ul>{panel.algoritmosBloqueados.map((a) => <li key={a}>{a}</li>)}</ul>
-        </div>
-        <div className="col-md-6">
-          <h2 className="h6">🔒 Secciones de explicación ocultas</h2>
-          <ul>{panel.seccionesBloqueadas.map((s) => <li key={s}>{s}</li>)}</ul>
-        </div>
+    <Escalonado>
+      <Encabezado icono={LuEye} rol="invitado" titulo={panel.mensaje}
+                  subtitulo="Nivel 1 · solo ves resultados finales y resúmenes.">
+        <Link to="/laboratorio" className="btn btn-primario">Probar el laboratorio <LuArrowRight /></Link>
+      </Encabezado>
+      <div className="rejilla-2">
+        <Tarjeta brilla className="t-vi">
+          <h2><LuCpu /> Algoritmos bloqueados</h2>
+          <ul className="bloqueados">{panel.algoritmosBloqueados.map((a) => <li key={a}><LuLock /> {a}</li>)}</ul>
+        </Tarjeta>
+        <Tarjeta brilla className="t-am">
+          <h2><LuBookOpen /> Explicaciones ocultas</h2>
+          <ul className="bloqueados">{panel.seccionesBloqueadas.map((s) => <li key={s}><LuLock /> {s}</li>)}</ul>
+        </Tarjeta>
       </div>
-    </>
+    </Escalonado>
   )
 }
