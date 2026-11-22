@@ -1,1 +1,2 @@
 # Criptografia_y_Seguridad_Aplicada
+Para ejecutarlo se necesita JDK 17 o superior y Node.js. Primero se inicia el backend con .\mvnw.cmd spring-boot:run dentro de SecureLink; la base securelink.db se crea sola. Luego, en frontend, se ejecutan npm install y npm run dev, y se abre http://localhost:5173. Las pruebas se corren con .\mvnw.cmd test dentro de SecureLink. Los scripts de la Parte II están en la carpeta Parte_II; se ejecutan con python rc4_demo.py, python rc5_simulacion.py y python rsa_pss_firma.py.
