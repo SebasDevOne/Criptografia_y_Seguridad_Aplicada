@@ -1,20 +1,87 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  LuFlaskConical, LuLock, LuTriangleAlert, LuPlay, LuCopy, LuCheck, LuLoaderCircle, LuTimer, LuEyeOff,
+  LuBinary, LuHash, LuKeyRound, LuShieldCheck, LuLockKeyhole, LuMousePointerClick, LuBookOpen, LuWorkflow,
+  LuLogIn, LuLogOut,
+} from 'react-icons/lu'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import { Escalonado, Encabezado, Tarjeta, Insignia, Medidor } from '../components/Piezas.jsx'
 
-const ETIQUETA = { COMPLETO: 'success', PARCIAL: 'warning', OCULTO: 'secondary' }
+const ICONO_CAT = {
+  'Codificación': LuBinary, 'Hash y MAC': LuHash, 'Contraseñas': LuKeyRound,
+  'Cifrado simétrico': LuLockKeyhole, 'Cifrado asimétrico': LuShieldCheck,
+}
 const NECESITA_CLAVE = ['HMAC_SHA256', 'RC4', 'AES_CBC', 'AES_GCM', 'CHACHA20']
+const NIVEL_ROL = { invitado: 1, usuario: 2, admin: 3 }
+
+// Flujo visual: Entrada -> pasos del algoritmo -> Salida. Cada nodo se puede abrir para ver su detalle.
+function Flujo({ resp, entrada, operacion }) {
+  const nodos = [
+    { clave: 'in', tipo: 'entrada', n: 'Entrada', t: operacion, v: entrada, icono: LuLogIn },
+    ...resp.pasos.map((p, i) => ({ clave: 'p' + i, tipo: p.visibilidad, n: 'Paso ' + (i + 1), t: p.titulo, v: p.valor, icono: null })),
+    { clave: 'out', tipo: 'salida', n: 'Salida', t: 'Resultado final', v: resp.resultado, icono: LuLogOut },
+  ]
+  const [sel, setSel] = useState('out')
+  const activo = nodos.find((x) => x.clave === sel) || nodos[nodos.length - 1]
+
+  return (
+    <>
+      <div className="flujo-wrap">
+        <div className="flujo">
+          {nodos.map((nd, i) => (
+            <Fragment key={nd.clave}>
+              {i > 0 && <motion.div className="enlace" initial={{ opacity: 0, scaleX: 0 }} animate={{ opacity: 1, scaleX: 1 }}
+                                      style={{ originX: 0 }} transition={{ delay: i * 0.16 }}><i style={{ animationDelay: i * 0.25 + 's' }} /></motion.div>}
+              <motion.button className={'nodo ' + nd.tipo + (sel === nd.clave ? ' activo' : '')} onClick={() => setSel(nd.clave)}
+                             initial={{ opacity: 0, y: 14, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+                             transition={{ delay: i * 0.16, duration: 0.4 }}>
+                <div className="n">{nd.icono ? <nd.icono /> : nd.tipo === 'OCULTO' ? <LuEyeOff /> : null}{nd.n}</div>
+                <div className="t">{nd.tipo === 'OCULTO' ? 'Oculto para tu rol' : nd.t}</div>
+                {nd.v && nd.tipo !== 'OCULTO' && <div className="v">{nd.v}</div>}
+              </motion.button>
+            </Fragment>
+          ))}
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait">
+        <motion.div key={activo.clave} className="detalle-nodo" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}>
+          <h4>
+            {activo.n}: {activo.tipo === 'OCULTO' ? 'Oculto para tu rol' : activo.t}
+            {['COMPLETO', 'PARCIAL', 'OCULTO'].includes(activo.tipo) && <Insignia tipo={activo.tipo}>{activo.tipo.toLowerCase()}</Insignia>}
+          </h4>
+          {activo.v ? <code>{activo.v}</code> : <span style={{ color: 'var(--tenue)', fontSize: '.85rem' }}>Sube de rol para ver este detalle.</span>}
+        </motion.div>
+      </AnimatePresence>
+
+      <div className="leyenda-flujo">
+        <span><i style={{ background: '#5b92ff' }} />Visible completo</span>
+        <span><i style={{ background: 'var(--ambar)' }} />Visible parcial</span>
+        <span><i style={{ background: 'var(--violeta)' }} />Oculto para tu rol</span>
+      </div>
+    </>
+  )
+}
 
 export default function Laboratorio() {
   const { sesion } = useAuth()
   const [lista, setLista] = useState([])
+  const [cat, setCat] = useState(null)
   const [codigo, setCodigo] = useState(null)
   const [detalle, setDetalle] = useState(null)
   const [form, setForm] = useState({ operacion: '', texto: '', clave: '', referencia: '' })
   const [resp, setResp] = useState(null)
+  const [enviado, setEnviado] = useState(null)
   const [error, setError] = useState(null)
+  const [ejecutando, setEjecutando] = useState(false)
+  const [copiado, setCopiado] = useState(false)
 
-  useEffect(() => { api('/didactica/algoritmos').then(setLista).catch((e) => setError(e.message)) }, [])
+  useEffect(() => {
+    api('/didactica/algoritmos').then((l) => { setLista(l); setCat(l[0]?.categoria) }).catch((e) => setError(e.message))
+  }, [])
 
   async function elegir(a) {
     setCodigo(a.codigo); setResp(null); setError(null)
@@ -23,101 +90,126 @@ export default function Laboratorio() {
   }
 
   async function ejecutar(e) {
-    e.preventDefault(); setError(null); setResp(null)
+    e.preventDefault(); setError(null); setResp(null); setEjecutando(true)
     try {
-      setResp(await api('/didactica/operar', { metodo: 'POST', cuerpo: { algoritmo: codigo, ...form } }))
-    } catch (err) { setError(err.message) }
+      const r = await api('/didactica/operar', { metodo: 'POST', cuerpo: { algoritmo: codigo, ...form } })
+      setEnviado({ texto: form.texto, operacion: form.operacion })
+      setResp(r)
+    } catch (err) { setError(err.message) } finally { setEjecutando(false) }
+  }
+
+  async function copiar() {
+    try { await navigator.clipboard.writeText(resp.resultado); setCopiado(true); setTimeout(() => setCopiado(false), 1500) } catch { /* sin permiso */ }
   }
 
   const alg = detalle?.algoritmo
   const cambiar = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const categorias = [...new Set(lista.map((a) => a.categoria))]
+  const nivel = NIVEL_ROL[sesion.rol]
 
   return (
-    <>
-      <h1 className="h3">Laboratorio criptográfico</h1>
-      <p className="text-muted">
-        Tu rol es <strong>{sesion.rol}</strong>: cuanto más alto el nivel, más del funcionamiento interno ves.
-        <span className="badge text-bg-success ms-2">completo</span>
-        <span className="badge text-bg-warning ms-1">parcial</span>
-        <span className="badge text-bg-secondary ms-1">oculto</span>
-      </p>
-      <div className="row g-4">
-        <div className="col-md-4">
-          <div className="list-group">
-            {lista.map((a) => (
-              <button key={a.codigo} onClick={() => elegir(a)}
-                      className={'list-group-item list-group-item-action d-flex justify-content-between ' + (codigo === a.codigo ? 'active' : '')}>
-                <span>{a.nombre}<br /><small className="opacity-75">{a.categoria}</small></span>
-                <span>{!a.seguro && <span title="Inseguro">⚠️</span>}{!a.puedeEjecutar && <span title="Requiere más nivel"> 🔒</span>}</span>
-              </button>
-            ))}
-          </div>
+    <Escalonado>
+      <Encabezado icono={LuFlaskConical} rol={sesion.rol} titulo="Laboratorio criptográfico"
+                  subtitulo="Elige un algoritmo, pruébalo y sigue el recorrido del dato paso a paso.">
+        <Medidor nivel={nivel} /><Insignia tipo={sesion.rol}>{sesion.rol} · nivel {nivel}</Insignia>
+      </Encabezado>
+
+      <Tarjeta className="lab-sel t-az">
+        <h2><LuWorkflow /> 1 · Elige un algoritmo</h2>
+        <div className="cats">
+          {categorias.map((c) => {
+            const Ico = ICONO_CAT[c] || LuHash
+            return <button key={c} className={'cat' + (cat === c ? ' sel' : '')} onClick={() => setCat(c)}><Ico /> {c}</button>
+          })}
         </div>
+        <div className="chips">
+          {lista.filter((a) => a.categoria === cat).map((a) => (
+            <button key={a.codigo} className={'chip' + (codigo === a.codigo ? ' sel' : '')} onClick={() => elegir(a)}>
+              {a.nombre}
+              {!a.seguro && <LuTriangleAlert className="mal" title="Obsoleto" />}
+              {!a.puedeEjecutar && <LuLock className="bloq" title="Requiere más nivel" />}
+            </button>
+          ))}
+        </div>
+      </Tarjeta>
 
-        <div className="col-md-8">
-          {!alg && <div className="alert alert-info">Elige un algoritmo de la lista.</div>}
-          {alg && (
-            <>
-              <h2 className="h5">{alg.nombre} {!alg.seguro && <span className="badge text-bg-danger">obsoleto</span>}</h2>
-              {detalle.secciones.map((s) => (
-                <div key={s.codigo} className="mb-2">
-                  <strong>{s.nombre}: </strong>
-                  {s.bloqueada ? <span className="text-muted">🔒 Requiere nivel {s.nivelRequerido}</span> : s.contenido}
+      <AnimatePresence mode="wait">
+        {!alg ? (
+          <motion.div key="vacio" className="tarjeta vacio" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <LuMousePointerClick /><p>Selecciona un algoritmo para ver cómo funciona y probarlo.</p>
+          </motion.div>
+        ) : (
+          <motion.div key={alg.codigo} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.35 }}>
+            <div className="lab-cols">
+              <div className="tarjeta t-vi">
+                <h2><LuBookOpen /> 2 · Entiende {alg.nombre}
+                  {!alg.seguro && <Insignia tipo="peligro"><LuTriangleAlert /> obsoleto</Insignia>}
+                </h2>
+                <div className="saber">
+                  {detalle.secciones.map((s, i) => (
+                    <motion.div key={s.codigo} className={'seccion' + (s.bloqueada ? ' bloq' : '')}
+                                initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.07 }}>
+                      <h3>{s.nombre}</h3>
+                      <p>{s.bloqueada ? <><LuLock /> Reservado: requiere nivel {s.nivelRequerido}.</> : s.contenido}</p>
+                    </motion.div>
+                  ))}
                 </div>
-              ))}
+              </div>
 
-              <hr />
-              {!alg.puedeEjecutar && (
-                <div className="alert alert-warning">Tu rol no puede ejecutar este algoritmo (requiere nivel {alg.nivelMinimo}).</div>
-              )}
-              {alg.puedeEjecutar && (
-                <form onSubmit={ejecutar} className="mb-3">
-                  <div className="row g-2">
-                    <div className="col-sm-4">
-                      <select className="form-select" value={form.operacion} onChange={cambiar('operacion')}>
+              <div className="tarjeta t-am">
+                <h2><LuPlay /> 3 · Pruébalo</h2>
+                {!alg.puedeEjecutar ? (
+                  <div className="alerta aviso"><LuLock /> Tu rol no puede ejecutar este algoritmo (requiere nivel {alg.nivelMinimo}).</div>
+                ) : (
+                  <form onSubmit={ejecutar}>
+                    <div className="form-fila">
+                      <select value={form.operacion} onChange={cambiar('operacion')}>
                         {alg.operaciones.map((o) => <option key={o}>{o}</option>)}
                       </select>
-                    </div>
-                    <div className="col-sm-8">
-                      <input className="form-control" placeholder="Texto de entrada" value={form.texto}
-                             onChange={cambiar('texto')} required />
+                      <input placeholder="Texto de entrada" value={form.texto} onChange={cambiar('texto')} required />
                     </div>
                     {NECESITA_CLAVE.includes(alg.codigo) && (
-                      <div className="col-12"><input className="form-control" placeholder="Clave o frase secreta"
-                             value={form.clave} onChange={cambiar('clave')} /></div>
+                      <div className="campo"><input placeholder="Clave o frase secreta" value={form.clave} onChange={cambiar('clave')} /></div>
                     )}
                     {form.operacion === 'VERIFICAR' && (
-                      <div className="col-12"><input className="form-control" placeholder="Valor de referencia (hash a comparar)"
-                             value={form.referencia} onChange={cambiar('referencia')} /></div>
+                      <div className="campo"><input placeholder="Valor de referencia (hash a comparar)" value={form.referencia} onChange={cambiar('referencia')} /></div>
                     )}
-                    <div className="col-12"><button className="btn btn-primary">Ejecutar</button></div>
-                  </div>
-                </form>
-              )}
-              {error && <div className="alert alert-danger">{error}</div>}
+                    <button className="btn btn-primario" disabled={ejecutando}>
+                      {ejecutando ? <><LuLoaderCircle className="girar" /> Ejecutando…</> : <><LuPlay /> Ejecutar</>}
+                    </button>
+                  </form>
+                )}
+                <AnimatePresence>
+                  {error && <motion.div className="alerta error" style={{ marginTop: 16, marginBottom: 0 }} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}><LuTriangleAlert /> {error}</motion.div>}
+                </AnimatePresence>
+                <AnimatePresence>
+                  {resp && (
+                    <motion.div style={{ marginTop: 18 }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                      {resp.aviso && <div className="alerta aviso"><LuTriangleAlert /> {resp.aviso}</div>}
+                      <div className="resultado">
+                        {resp.resultado}
+                        <button className="btn btn-fantasma btn-peq copiar" onClick={copiar} aria-label="Copiar">{copiado ? <LuCheck /> : <LuCopy />}</button>
+                      </div>
+                      {resp.tiempoMicros != null && <div style={{ marginTop: 10 }}><Insignia tipo="gris"><LuTimer /> {(resp.tiempoMicros / 1000).toFixed(1)} ms</Insignia></div>}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
+
+            <AnimatePresence>
               {resp && (
-                <div className="card"><div className="card-body">
-                  {resp.aviso && <div className="alert alert-warning py-1">{resp.aviso}</div>}
-                  <h3 className="h6">Resultado</h3>
-                  <pre className="bg-light p-2 border rounded" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{resp.resultado}</pre>
-                  {resp.tiempoMicros != null && <small className="text-muted">Tiempo: {resp.tiempoMicros} µs</small>}
-                  <h3 className="h6 mt-3">Cómo se obtuvo</h3>
-                  <ul className="list-group">
-                    {resp.pasos.map((p, i) => (
-                      <li key={i} className="list-group-item">
-                        <span className={'badge me-2 text-bg-' + ETIQUETA[p.visibilidad]}>{p.visibilidad.toLowerCase()}</span>
-                        <strong>{p.titulo}</strong>
-                        {p.valor && <div><code style={{ wordBreak: 'break-all' }}>{p.valor}</code></div>}
-                      </li>
-                    ))}
-                  </ul>
-                  {resp.pasosOcultos > 0 && <small className="text-muted">🔒 {resp.pasosOcultos} detalle(s) oculto(s) para tu rol.</small>}
-                </div></div>
+                <motion.div className="tarjeta t-az mt" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                  <h2><LuWorkflow /> 4 · Recorrido del dato
+                    {resp.pasosOcultos > 0 && <Insignia tipo="OCULTO"><LuLock /> {resp.pasosOcultos} oculto(s) para tu rol</Insignia>}
+                  </h2>
+                  <Flujo key={resp.resultado + resp.pasos.length} resp={resp} entrada={enviado.texto} operacion={enviado.operacion} />
+                </motion.div>
               )}
-            </>
-          )}
-        </div>
-      </div>
-    </>
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Escalonado>
   )
 }

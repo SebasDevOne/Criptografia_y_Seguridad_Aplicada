@@ -1,36 +1,51 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { LuUser, LuFingerprint, LuFlaskConical, LuHistory, LuArrowRight, LuLoaderCircle, LuCpu } from 'react-icons/lu'
 import { api } from '../api.js'
+import { Escalonado, Tarjeta, Encabezado, Insignia } from '../components/Piezas.jsx'
 
 export default function Usuario() {
   const [panel, setPanel] = useState(null)
   const [error, setError] = useState(null)
   useEffect(() => { api('/usuario/panel').then(setPanel).catch((e) => setError(e.message)) }, [])
 
-  if (error) return <div className="alert alert-danger">{error}</div>
-  if (!panel) return <p>Cargando…</p>
+  if (error) return <div className="alerta error">{error}</div>
+  if (!panel) return <div className="vacio"><LuLoaderCircle className="girar" /></div>
   const h = panel.miHash
   return (
-    <>
-      <h1 className="h3">Panel de usuario</h1>
-      <p className="text-muted">Nivel 2: ves la estructura de tu hash, pero la sal y el digest salen parciales.</p>
-      <div className="card mb-4"><div className="card-body">
-        <h2 className="h6">Tu hash almacenado ({h.algoritmo})</h2>
-        <dl className="row mb-0">
-          <dt className="col-sm-3">Versión</dt><dd className="col-sm-9">{h.version}</dd>
-          <dt className="col-sm-3">Costo</dt><dd className="col-sm-9">{h.costo} (2^{h.costo} iteraciones)</dd>
-          <dt className="col-sm-3">Sal</dt><dd className="col-sm-9"><code>{h.sal}</code></dd>
-          <dt className="col-sm-3">Digest</dt><dd className="col-sm-9"><code>{h.digest}</code></dd>
-        </dl>
-      </div></div>
-      <Link className="btn btn-primary" to="/laboratorio">Ir al laboratorio criptográfico</Link>
-      <h2 className="h5 mt-4">Mis últimas operaciones</h2>
-      <ul className="list-group">
-        {panel.historial.length === 0 && <li className="list-group-item text-muted">Aún no has usado el laboratorio.</li>}
-        {panel.historial.map((o) => (
-          <li key={o.id} className="list-group-item">{o.fecha} — {o.algoritmo} · {o.detalle}</li>
-        ))}
-      </ul>
-    </>
+    <Escalonado>
+      <Encabezado icono={LuUser} rol="usuario" titulo={'Hola, ' + panel.usuario}
+                  subtitulo="Nivel 2 · ves la estructura de tu hash, con la sal y el digest parciales.">
+        <Link to="/laboratorio" className="btn btn-primario">Ir al laboratorio <LuArrowRight /></Link>
+      </Encabezado>
+
+      <Tarjeta brilla className="t-az">
+        <h2><LuFingerprint /> Así se guarda tu contraseña ({h.algoritmo})</h2>
+        <div className="hash-lin">
+          <span className="seg version">{h.version}</span>$<span className="seg costo">{h.costo}</span>$
+          <span className="seg sal">{h.sal}</span> <span className="seg digest">{h.digest}</span>
+        </div>
+        <div className="leyenda">
+          <span><i style={{ background: '#8b78ff' }} />Versión</span>
+          <span><i style={{ background: 'var(--ambar)' }} />Costo: 2<sup>{h.costo}</sup> = {2 ** h.costo} iteraciones</span>
+          <span><i style={{ background: 'var(--azul)' }} />Sal aleatoria (parcial para tu rol)</span>
+          <span><i style={{ background: 'var(--azul-vivo)' }} />Digest (parcial para tu rol)</span>
+        </div>
+      </Tarjeta>
+
+      <Tarjeta className="mt t-am">
+        <h2><LuHistory /> Mis últimas operaciones</h2>
+        {panel.historial.length === 0 ? (
+          <p style={{ color: 'var(--suave)', margin: 0 }}>Aún no has usado el laboratorio.</p>
+        ) : (
+          <ul className="lista-hist">
+            {panel.historial.map((o) => (
+              <li key={o.id}><LuCpu /><b>{o.algoritmo}</b> <Insignia tipo="usuario">{o.detalle}</Insignia><span className="fecha">{o.fecha}</span></li>
+            ))}
+          </ul>
+        )}
+      </Tarjeta>
+      <p style={{ color: 'var(--tenue)', fontSize: '.85rem', marginTop: 18 }}><LuFlaskConical style={{ verticalAlign: '-2px' }} /> Sube a nivel 3 para ver la sal y el digest completos.</p>
+    </Escalonado>
   )
 }
